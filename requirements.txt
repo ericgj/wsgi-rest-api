@@ -1,0 +1,6 @@
+beautifulsoup4==4.6.0
+jsonschema==2.6.0
+six==1.11.0
+waitress==1.1.0
+WebOb==1.7.4
+WebTest==2.0.29
