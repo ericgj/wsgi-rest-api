@@ -5,17 +5,15 @@ from functools import reduce
 from webob.exc import (
     HTTPException, HTTPInternalServerError, HTTPNotFound, HTTPUnprocessableEntity
 )
-from jsonschema import validate, ValidationError, RefResolver
 
 
 class Api:
-    def __init__(self, resources, id, name=u'', schema=None,
-                 schemas=[], config={}):
+    def __init__(self, resources, id, name=u'', config={}):
         self.config = config
         root = (
-            Resource(name=name, id=id, schema=schema, resources=resources, read=self.read)
+            Resource(name=name, id=id, resources=resources, read=self.read)
         )
-        self._index = index_matchers( compile_resource(root, [], schemas) )
+        self._index = index_matchers( compile_resource(root, []) )
         # print(self._index)
         self._start = compile_start( [ name, id ] )
 
@@ -40,12 +38,11 @@ class Api:
 
 
 class Resource:
-    def __init__(self, name, id=None, schema=None, 
+    def __init__(self, name, id=None, 
                  list=None, read=None, create=None, update=None, delete=None, 
                  resources=[]):
         self.name = name
         self.id = id
-        self.schema = schema
         self.list = list
         self.read = read
         self.create = create
@@ -55,62 +52,34 @@ class Resource:
 
 
 class Matcher:
-    def __init__(self, length, method, template, req_schema, res_schema, func):
+    def __init__(self, length, method, template, func):
         self.length = length
         self.method = method
         self.template = template
-        self.req_schema = req_schema
-        self.res_schema = res_schema
         self.func = func
 
     def __repr__(self):
         return (
-            "Matcher(%d, %s, %s, %s, %s, <func>)" % 
+            "Matcher(%d, %s, %s, <func>)" % 
                 ( self.length, 
                   self.method.__repr__(),
-                  self.req_schema.__repr__(),
-                  self.res_schema.__repr__(),
                   self.template.__repr__()
                 )
         )
 
 
 class Handler:
-    def __init__(self, req_schema, res_schema, params, func):
-        self.req_schema = req_schema
-        self.res_schema = res_schema
+    def __init__(self, params, func):
         self.params = params
         self.func = func
 
     def __call__(self, req, config={}):
-        if not self.req_schema is None:
-            try:
-                validate( req.json_body, self.req_schema )
-            except ValidationError as e:
-                raise HTTPUnprocessableEntity( detail=str(e) )
-
-        res = self.func( req, self.params, config=config )
-
-        if not self.res_schema is None:
-            try:
-                validate( res.json_body, self.res_schema )
-            except ValidationError as e:
-                raise HTTPUnprocessableEntity( 
-                    detail=str(e),
-                    comment="\n".join( 
-                        str(e_) for e_ in sorted( e.context, key=lambda x: x.schema_path )
-                    )
-                )
-
-        return res
-
+        return self.func( req, self.params, config=config )
 
     def __repr__(self):
         return (
-            "Handler(%s, %s, %s, <func>)" % 
-                ( self.req_schema.__repr__(), 
-                  self.res_schema.__repr__(), 
-                  self.params.__repr__()
+            "Handler(%s, <func>)" % 
+                ( self.params.__repr__(),
                 )
         )
 
@@ -121,23 +90,19 @@ class Handler:
 
 
 
-def compile_resource( resource, prefix, schemas={} ):
+def compile_resource( resource, prefix ):
     id = capture_id( resource.id )
     ancestor_id = capture_ancestor_id(resource.name, resource.id)
     name = re.escape(resource.name)
     (collection, entity) = compile( prefix, name, id )
     collection_len = len(prefix) + 1
     entity_len = len(prefix) + 2
-    
-    # TODO: get correct schema from schemas for each of list/create/read/update/delete
 
     return (
         ([ Matcher( 
                length=collection_len, 
                method=u'GET', 
                template=collection, 
-               req_schema=None, 
-               res_schema=None, 
                func=resource.list 
            ) 
          ] if resource.list else [] )  +
@@ -145,8 +110,6 @@ def compile_resource( resource, prefix, schemas={} ):
                length=collection_len, 
                method=u'POST', 
                template=collection, 
-               req_schema=None, 
-               res_schema=None, 
                func=resource.create 
            ) 
          ] if resource.create else [] )  +
@@ -154,8 +117,6 @@ def compile_resource( resource, prefix, schemas={} ):
                length=entity_len,
                method=u'GET', 
                template=entity, 
-               req_schema=None, 
-               res_schema=None, 
                func=resource.read 
            ) 
          ] if resource.read else [] ) +
@@ -163,8 +124,6 @@ def compile_resource( resource, prefix, schemas={} ):
                length=entity_len, 
                method=u'POST', 
                template=entity, 
-               req_schema=None, 
-               res_schema=None, 
                func=resource.update 
            ) 
          ] if resource.update else [] ) +
@@ -172,8 +131,6 @@ def compile_resource( resource, prefix, schemas={} ):
                length=entity_len, 
                method=u'DELETE', 
                template=entity, 
-               req_schema=None, 
-               res_schema=None, 
                func=resource.delete 
            ) 
          ] if resource.delete else [] ) +    
@@ -203,8 +160,6 @@ def match_path( path, matchers ):
             continue
         else:
             yield Handler( 
-                    req_schema=matcher.req_schema, 
-                    res_schema=matcher.res_schema, 
                     func=matcher.func, 
                     params=m.groupdict()  
             )
